@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>InventoryApi</RootNamespace>
+    <ApplicationIcon>..\assets\icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!-- SyncBuild=true: output to bin\sync\ so the sync exe does not conflict with the web API exe -->

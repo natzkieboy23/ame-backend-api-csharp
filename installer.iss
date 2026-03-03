@@ -35,7 +35,7 @@ PrivilegesRequired=admin
 ; Show a "restart required" page if needed
 RestartIfNeededByRun=no
 ; Installer icon (optional — comment out if you don't have one)
-; SetupIconFile=assets\icon.ico
+SetupIconFile=assets\icon.ico
 WizardStyle=modern
 
 ; ── Files ──────────────────────────────────────────────────
@@ -53,7 +53,7 @@ Name: "{commondesktop}\AME Sync Console";    Filename: "{app}\{#AppExe}"; Parame
 
 ; Start Menu shortcuts
 Name: "{group}\AME Sync Console";            Filename: "{app}\{#AppExe}"; Parameters: "--sync"; WorkingDir: "{app}"; Comment: "AME QuickBooks Sync Console"
-Name: "{group}\AME Inventory API (Swagger)"; Filename: "{#AppURL}";       Flags: shellexec;      Comment: "Open API in browser"
+Name: "{group}\AME Inventory API (Swagger)"; Filename: "{#AppURL}";       Comment: "Open API in browser"
 Name: "{group}\Uninstall AME Inventory";     Filename: "{uninstallexe}"
 
 ; ── Pascal code: install / uninstall Windows Service ───────
@@ -105,6 +105,5 @@ begin
   end;
 end;
 
-; ── Finish page message ─────────────────────────────────────
 [Messages]
 FinishedLabel=Setup has finished installing {#AppName}.%n%n  API is running at:  http://localhost:5141%n  Swagger UI opens at the same address.%n%n  To sync with QuickBooks, use the [AME Sync Console] shortcut on your desktop.

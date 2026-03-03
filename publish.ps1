@@ -12,7 +12,7 @@ $project    = Join-Path $PSScriptRoot "InventoryApi"
 $outputPath = Join-Path $PSScriptRoot "publish"
 
 Write-Host ""
-Write-Host "  AME Inventory — Publishing self-contained release..." -ForegroundColor Cyan
+Write-Host "  AME Inventory - Publishing self-contained release..." -ForegroundColor Cyan
 Write-Host ""
 
 dotnet publish "$project" `
