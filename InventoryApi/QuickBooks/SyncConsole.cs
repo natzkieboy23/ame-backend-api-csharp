@@ -83,7 +83,7 @@ public static class SyncConsole
 
             if (key == '0') break;
 
-            if (key == '5')
+            if (key == '6')
             {
                 Console.WriteLine();
                 Console.WriteLine("  Re-testing connections...\n");
@@ -101,7 +101,7 @@ public static class SyncConsole
                 Console.Write("  QuickBooks:  ");
                 PrintStatus(qbConnected, qbStatusText);
             }
-            else if (key is '1' or '2' or '3' or '4')
+            else if (key is '1' or '2' or '3' or '4' or '5')
             {
                 await RunOptionAsync(key, mysqlConn, qbConfig);
                 // Silently refresh statuses after each operation
@@ -110,7 +110,7 @@ public static class SyncConsole
             }
             else
             {
-                Ui.Warn("  Invalid option. Press 1–5 or 0.");
+                Ui.Warn("  Invalid option. Press 1–6 or 0.");
             }
 
             Console.WriteLine();
@@ -187,12 +187,13 @@ public static class SyncConsole
         Console.WriteLine("  [1]  Sync Vendors          (QB → MySQL vendor table)");
         Console.WriteLine("  [2]  Sync Items            (QB → MySQL iteminventory table)");
         Console.WriteLine("  [3]  Sync Inventory Sites  (QB → MySQL inventorysite table)");
+        Console.WriteLine("  [4]  Sync Item Sites (Qty) (QB → MySQL itemsites table)");
         Console.WriteLine();
         Console.WriteLine("  ─── Push to QuickBooks ───────────────────────────");
-        Console.WriteLine("  [4]  Send Bills            (batch sync all pending → QB BillAdd)");
+        Console.WriteLine("  [5]  Send Bills            (batch sync all pending → QB BillAdd)");
         Console.WriteLine();
         Console.WriteLine("  ─── Connection ───────────────────────────────────");
-        Console.WriteLine("  [5]  Test Connections");
+        Console.WriteLine("  [6]  Test Connections");
         Console.WriteLine();
         Console.WriteLine("  ──────────────────────────────────────────────────");
         Console.WriteLine("  [0]  Exit");
@@ -221,7 +222,7 @@ public static class SyncConsole
 
         try
         {
-            if (key == '4')
+            if (key == '5')
             {
                 Ui.Header("  ── Batch Sync Bills to QuickBooks ───────────────────────");
                 using var session = new QbSession(qbConfig);
@@ -238,7 +239,8 @@ public static class SyncConsole
                 {
                     '1' => "Vendor",
                     '2' => "Item Inventory",
-                    _   => "Inventory Site",
+                    '3' => "Inventory Site",
+                    _   => "Item Sites (Quantity)",
                 };
                 Ui.Header($"  ── Pull {label} from QuickBooks ──────────────────────────");
 
@@ -251,7 +253,8 @@ public static class SyncConsole
                 {
                     '1' => await new VendorSync(mysqlConn, session).RunAsync(),
                     '2' => await new ItemSync(mysqlConn, session).RunAsync(),
-                    _   => await new InventorySiteSync(mysqlConn, session).RunAsync(),
+                    '3' => await new InventorySiteSync(mysqlConn, session).RunAsync(),
+                    _   => await new ItemSiteSync(mysqlConn, session).RunAsync(),
                 };
 
                 sw.Stop();

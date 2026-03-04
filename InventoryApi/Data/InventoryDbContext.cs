@@ -34,7 +34,10 @@ public class InventoryDbContext : DbContext
             entity.Property(e => e.QuantityOnHand).HasPrecision(16, 6);
             entity.Property(e => e.QuantityOnPurchaseOrders).HasPrecision(16, 6);
             entity.Property(e => e.QuantityOnSalesOrders).HasPrecision(16, 6);
+            entity.Property(e => e.QuantityToBeBuiltByPendingBuildTxns).HasPrecision(16, 6);
+            entity.Property(e => e.QuantityRequiredByPendingBuildTxns).HasPrecision(16, 6);
             entity.Property(e => e.QuantityOnPendingTransfers).HasPrecision(16, 6);
+            entity.Property(e => e.AssemblyBuildPoint).HasPrecision(16, 6);
         });
 
         modelBuilder.Entity<Vendor>(entity =>
