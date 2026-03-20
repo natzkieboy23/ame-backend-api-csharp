@@ -8,12 +8,14 @@ public class InventoryDbContext : DbContext
     public InventoryDbContext(DbContextOptions<InventoryDbContext> options)
         : base(options) { }
 
-    public DbSet<InventorySite> InventorySites { get; set; }
-    public DbSet<ItemInventory> ItemInventories { get; set; }
-    public DbSet<ItemSite> ItemSites { get; set; }
-    public DbSet<Vendor> Vendors { get; set; }
-    public DbSet<Bill> Bills { get; set; }
-    public DbSet<TxnItemLineDetail> TxnItemLineDetails { get; set; }
+    public DbSet<InventorySite>           InventorySites          { get; set; }
+    public DbSet<ItemInventory>           ItemInventories         { get; set; }
+    public DbSet<ItemSite>                ItemSites               { get; set; }
+    public DbSet<Vendor>                  Vendors                 { get; set; }
+    public DbSet<Bill>                    Bills                   { get; set; }
+    public DbSet<TxnItemLineDetail>       TxnItemLineDetails      { get; set; }
+    public DbSet<PriceLevel>              PriceLevels             { get; set; }
+    public DbSet<PriceLevelPerItemDetail> PriceLevelPerItemDetails { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -62,6 +64,17 @@ public class InventoryDbContext : DbContext
             entity.HasOne<Bill>()
                   .WithMany(b => b.LineItems)
                   .HasForeignKey(l => l.IDKEY)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PriceLevelPerItemDetail>(entity =>
+        {
+            entity.HasKey(e => new { e.IDKEY, e.SeqNum });
+            entity.Property(e => e.CustomPrice).HasPrecision(16, 6);
+
+            entity.HasOne<PriceLevel>()
+                  .WithMany(p => p.PerItemDetails)
+                  .HasForeignKey(d => d.IDKEY)
                   .OnDelete(DeleteBehavior.Cascade);
         });
     }

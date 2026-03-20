@@ -15,6 +15,9 @@ obj/
 # Publish output
 publish/
 
+#installer-output/
+installer-output/
+
 # Sensitive config — do NOT commit credentials
 appsettings.json
 appsettings.*.json

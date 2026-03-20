@@ -59,4 +59,6 @@ public class ItemInventoryResponseDto
     public string? ExternalGUID { get; set; }
     // Populated only when ?siteFullName= is provided — from itemsites join
     public decimal? SiteQuantityOnHand { get; set; }
+    // Warehouse price level (pricelevel.Name LIKE 'W%') custom price; 0.00 if not set
+    public decimal  WarehousePrice     { get; set; } = 0m;
 }

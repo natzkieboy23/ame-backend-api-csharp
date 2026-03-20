@@ -101,7 +101,7 @@ public static class SyncConsole
                 Console.Write("  QuickBooks:  ");
                 PrintStatus(qbConnected, qbStatusText);
             }
-            else if (key is '1' or '2' or '3' or '4' or '5')
+            else if (key is '1' or '2' or '3' or '4' or '5' or '7' or '8')
             {
                 await RunOptionAsync(key, mysqlConn, qbConfig);
                 // Silently refresh statuses after each operation
@@ -110,7 +110,7 @@ public static class SyncConsole
             }
             else
             {
-                Ui.Warn("  Invalid option. Press 1–6 or 0.");
+                Ui.Warn("  Invalid option. Press 1–8 or 0.");
             }
 
             Console.WriteLine();
@@ -188,6 +188,8 @@ public static class SyncConsole
         Console.WriteLine("  [2]  Sync Items            (QB → MySQL iteminventory table)");
         Console.WriteLine("  [3]  Sync Inventory Sites  (QB → MySQL inventorysite table)");
         Console.WriteLine("  [4]  Sync Item Sites (Qty) (QB → MySQL itemsites table)");
+        Console.WriteLine("  [7]  Sync UOM Sets         (QB → MySQL unitofmeasureset table)");
+        Console.WriteLine("  [8]  Sync Price Levels     (QB → MySQL pricelevel + pricelevelperitemdetail)");
         Console.WriteLine();
         Console.WriteLine("  ─── Push to QuickBooks ───────────────────────────");
         Console.WriteLine("  [5]  Send Bills            (batch sync all pending → QB BillAdd)");
@@ -240,7 +242,9 @@ public static class SyncConsole
                     '1' => "Vendor",
                     '2' => "Item Inventory",
                     '3' => "Inventory Site",
-                    _   => "Item Sites (Quantity)",
+                    '4' => "Item Sites (Quantity)",
+                    '7' => "UOM Sets",
+                    _   => "Price Levels",
                 };
                 Ui.Header($"  ── Pull {label} from QuickBooks ──────────────────────────");
 
@@ -254,7 +258,9 @@ public static class SyncConsole
                     '1' => await new VendorSync(mysqlConn, session).RunAsync(),
                     '2' => await new ItemSync(mysqlConn, session).RunAsync(),
                     '3' => await new InventorySiteSync(mysqlConn, session).RunAsync(),
-                    _   => await new ItemSiteSync(mysqlConn, session).RunAsync(),
+                    '4' => await new ItemSiteSync(mysqlConn, session).RunAsync(),
+                    '7' => await new UOMSetSync(mysqlConn, session).RunAsync(),
+                    _   => await new PriceLevelSync(mysqlConn, session).RunAsync(),
                 };
 
                 sw.Stop();

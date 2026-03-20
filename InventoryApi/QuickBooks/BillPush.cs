@@ -65,38 +65,60 @@ public class BillPush(string mysqlConn, QbSession session)
             return;
         }
 
-        // Build and send single batch QBXML request
-        Console.WriteLine($"\n  Building batch BillAddRq for {allLines.Count} bill(s)...");
-        var requestXml = BuildBatchBillAddRq(pending, allLines);
+        // Resolve the "Piece" UOM set — stamped onto every pending line before sync
+        var piecesUom = await GetPiecesUomAsync();
+        if (piecesUom is null)
+            Ui.Warn("  Warning: 'Piece' UOM set not found — OverrideUOMSetRef will not be updated.");
+        else
+            Console.WriteLine($"  Piece UOM: {piecesUom.FullName} ({piecesUom.ListID}, base unit: {piecesUom.BaseUnitName})");
 
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine("\n  ── XML being sent ──────────────────────────────────");
-        Console.WriteLine(requestXml);
-        Console.WriteLine("  ────────────────────────────────────────────────────\n");
-        Console.ResetColor();
+        // Stamp Piece UOM onto every pending line in DB before syncing
+        if (piecesUom is not null)
+        {
+            var pendingTxnIds = allLines.Keys.ToList();
+            await UpdatePendingLinesUomAsync(pendingTxnIds, piecesUom);
+            Console.WriteLine($"  Updated line(s) → OverrideUOMSetRef = Piece.");
+        }
 
-        var responseXml = session.DoRequests(requestXml);
-
-        // Parse all BillAddRs responses
-        var results = ParseBatchBillAddRs(responseXml, pending, allLines);
-
-        // Report and persist each result
+        // Send one ProcessRequest per bill — isolates parse errors and lets others proceed
+        Console.WriteLine();
         int successCount = 0;
         int failCount    = 0;
 
-        foreach (var (txnId, qbTxnId, error) in results)
+        foreach (var bill in pending)
         {
+            if (!allLines.TryGetValue(bill.TxnID, out var lines)) continue;
+
+            var requestXml = BuildSingleBillAddRq(bill, lines, piecesUom);
+
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"  ── {Trunc(bill.VendorRef_FullName, 40)} ──────────────────────────");
+            Console.WriteLine(requestXml);
+            Console.WriteLine("  ────────────────────────────────────────────────────\n");
+            Console.ResetColor();
+
+            string responseXml;
+            try
+            {
+                responseXml = session.DoRequests(requestXml);
+            }
+            catch (Exception ex)
+            {
+                Ui.Error($"  ✕ {Trunc(bill.VendorRef_FullName, 30),-30} → QB parse/COM error: {ex.Message}");
+                failCount++;
+                continue;
+            }
+
+            var (qbTxnId, error) = ParseSingleBillAddRs(responseXml);
             if (error is null)
             {
-                await MarkSyncedAsync(txnId, qbTxnId!);
-                var vendor = pending.First(b => b.TxnID == txnId).VendorRef_FullName;
-                Ui.Ok($"  ✓ {Trunc(vendor, 30),-30} → QB TxnID: {qbTxnId}");
+                await MarkSyncedAsync(bill.TxnID, qbTxnId!);
+                Ui.Ok($"  ✓ {Trunc(bill.VendorRef_FullName, 30),-30} → QB TxnID: {qbTxnId}");
                 successCount++;
             }
             else
             {
-                var vendor = pending.First(b => b.TxnID == txnId).VendorRef_FullName;
-                Ui.Error($"  ✕ {Trunc(vendor, 30),-30} → {error}");
+                Ui.Error($"  ✕ {Trunc(bill.VendorRef_FullName, 30),-30} → {error}");
                 failCount++;
             }
         }
@@ -106,25 +128,16 @@ public class BillPush(string mysqlConn, QbSession session)
         else                  Ui.Error($"  Batch complete: all {failCount} failed.");
     }
 
-    // ── QBXML batch builder ───────────────────────────────────────────────────
+    // ── QBXML single-bill builder ─────────────────────────────────────────────
 
-    private string BuildBatchBillAddRq(
-        List<BillSummary> bills,
-        Dictionary<string, List<LineRow>> allLines)
+    private string BuildSingleBillAddRq(BillSummary bill, List<LineRow> lines, UomRow? piecesUom)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"""<?xml version="1.0" encoding="utf-8"?>""");
+        sb.AppendLine("""<?xml version="1.0"?>""");
         sb.AppendLine($"""<?qbxml version="{session.QbXmlVersion}"?>""");
         sb.AppendLine("""<QBXML>""");
         sb.AppendLine("""  <QBXMLMsgsRq onError="continueOnError">""");
-
-        int requestId = 1;
-        foreach (var bill in bills)
-        {
-            if (!allLines.TryGetValue(bill.TxnID, out var lines)) continue;
-            AppendBillAddRq(sb, bill, lines, requestId++);
-        }
-
+        AppendBillAddRq(sb, bill, lines, 1, piecesUom);
         sb.AppendLine("""  </QBXMLMsgsRq>""");
         sb.AppendLine("""</QBXML>""");
         return sb.ToString();
@@ -134,7 +147,8 @@ public class BillPush(string mysqlConn, QbSession session)
         StringBuilder sb,
         BillSummary bill,
         List<LineRow> lines,
-        int requestId)
+        int requestId,
+        UomRow? piecesUom)
     {
         sb.AppendLine($"""    <BillAddRq requestID="{requestId}">""");
         sb.AppendLine("""      <BillAdd>""");
@@ -201,6 +215,8 @@ public class BillPush(string mysqlConn, QbSession session)
             if (line.Quantity.HasValue)
                 sb.AppendLine($"""          <Quantity>{line.Quantity.Value.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)}</Quantity>""");
 
+            // Use the unit resolved from the item's own UOM set (via GetLinesAsync COALESCE join).
+            // OverrideUOMSetRef is not valid in BillAdd > ItemLineAdd (causes QB parse error).
             if (!string.IsNullOrWhiteSpace(line.UnitOfMeasure))
                 sb.AppendLine($"""          <UnitOfMeasure>{Escape(line.UnitOfMeasure)}</UnitOfMeasure>""");
 
@@ -230,44 +246,24 @@ public class BillPush(string mysqlConn, QbSession session)
         sb.AppendLine("""    </BillAddRq>""");
     }
 
-    // ── QBXML batch response parser ───────────────────────────────────────────
+    // ── QBXML single-bill response parser ────────────────────────────────────
 
-    /// <summary>Returns (mysqlTxnId, qbTxnId, errorMessage) per bill.</summary>
-    private static List<(string txnId, string? qbTxnId, string? error)> ParseBatchBillAddRs(
-        string xml,
-        List<BillSummary> bills,
-        Dictionary<string, List<LineRow>> allLines)
+    /// <summary>Returns (qbTxnId, errorMessage) for a single BillAddRs response.</summary>
+    private static (string? qbTxnId, string? error) ParseSingleBillAddRs(string xml)
     {
-        var doc     = XDocument.Parse(xml);
-        var results = new List<(string, string?, string?)>();
+        var doc    = XDocument.Parse(xml);
+        var rs     = doc.Descendants("BillAddRs").FirstOrDefault();
+        if (rs is null) return (null, "No BillAddRs element in QB response");
 
-        // Build ordered list of bills that were actually sent (same order as requestIDs)
-        var sentBills = bills
-            .Where(b => allLines.ContainsKey(b.TxnID))
-            .ToList();
-
-        var rsElements = doc.Descendants("BillAddRs").ToList();
-
-        for (int i = 0; i < rsElements.Count; i++)
+        var status = (string?)rs.Attribute("statusCode") ?? "-1";
+        if (status == "0")
         {
-            var rs     = rsElements[i];
-            var txnId  = i < sentBills.Count ? sentBills[i].TxnID : $"unknown-{i}";
-            var status = (string?)rs.Attribute("statusCode") ?? "-1";
-
-            if (status == "0")
-            {
-                var ret      = rs.Element("BillRet");
-                var qbTxnId  = ret?.Element("TxnID")?.Value ?? "unknown";
-                results.Add((txnId, qbTxnId, null));
-            }
-            else
-            {
-                var msg = (string?)rs.Attribute("statusMessage") ?? "Unknown QB error";
-                results.Add((txnId, null, $"QB error {status}: {msg}"));
-            }
+            var qbTxnId = rs.Element("BillRet")?.Element("TxnID")?.Value ?? "unknown";
+            return (qbTxnId, null);
         }
 
-        return results;
+        var msg = (string?)rs.Attribute("statusMessage") ?? "Unknown QB error";
+        return (null, $"QB error {status}: {msg}");
     }
 
     // ── MySQL helpers ─────────────────────────────────────────────────────────
@@ -294,20 +290,54 @@ public class BillPush(string mysqlConn, QbSession session)
     private async Task<List<LineRow>> GetLinesAsync(string txnId)
     {
         const string sql = """
-            SELECT TxnLineID, IDKEY, SeqNum,
-                   ItemRef_ListID, ItemRef_FullName,
-                   Description, Quantity, UnitOfMeasure,
-                   Cost, Amount,
-                   InventorySiteRef_ListID, InventorySiteRef_FullName,
-                   SerialNumber, LotNumber,
-                   ClassRef_ListID, ClassRef_FullName
-            FROM txnitemlinedetail
-            WHERE IDKEY = @TxnID
-            ORDER BY SeqNum
+            SELECT l.TxnLineID, l.IDKEY, l.SeqNum,
+                   l.ItemRef_ListID, l.ItemRef_FullName,
+                   l.Description, l.Quantity,
+                   COALESCE(NULLIF(l.UnitOfMeasure, ''), u.BaseUnitName) AS UnitOfMeasure,
+                   l.Cost, l.Amount,
+                   l.InventorySiteRef_ListID, l.InventorySiteRef_FullName,
+                   l.SerialNumber, l.LotNumber,
+                   l.ClassRef_ListID, l.ClassRef_FullName
+            FROM txnitemlinedetail l
+            LEFT JOIN iteminventory i ON i.ListID = l.ItemRef_ListID
+            LEFT JOIN unitofmeasureset u ON u.ListID = i.UnitOfMeasureSetRef_ListID
+            WHERE l.IDKEY = @TxnID
+            ORDER BY l.SeqNum
             """;
 
         await using var conn = new MySqlConnection(mysqlConn);
         return (await conn.QueryAsync<LineRow>(sql, new { TxnID = txnId })).ToList();
+    }
+
+    private async Task UpdatePendingLinesUomAsync(List<string> txnIds, UomRow piecesUom)
+    {
+        const string sql = """
+            UPDATE txnitemlinedetail
+            SET OverrideUOMSetRef_ListID   = @ListID,
+                OverrideUOMSetRef_FullName = @FullName
+            WHERE IDKEY IN @TxnIds
+            """;
+
+        await using var conn = new MySqlConnection(mysqlConn);
+        await conn.ExecuteAsync(sql, new
+        {
+            piecesUom.ListID,
+            piecesUom.FullName,
+            TxnIds = txnIds
+        });
+    }
+
+    private async Task<UomRow?> GetPiecesUomAsync()
+    {
+        const string sql = """
+            SELECT ListID, Name AS FullName, BaseUnitName
+            FROM unitofmeasureset
+            WHERE Name = 'Piece'
+            LIMIT 1
+            """;
+
+        await using var conn = new MySqlConnection(mysqlConn);
+        return await conn.QueryFirstOrDefaultAsync<UomRow>(sql);
     }
 
     private async Task MarkSyncedAsync(string txnId, string qbTxnId)
@@ -324,13 +354,13 @@ public class BillPush(string mysqlConn, QbSession session)
 
     // ── Utility ───────────────────────────────────────────────────────────────
 
+    // QB's COM XML parser rejects &apos; but accepts &#39; (numeric character reference).
     private static string Escape(string? s) =>
         (s ?? string.Empty)
             .Replace("&",  "&amp;")
             .Replace("<",  "&lt;")
             .Replace(">",  "&gt;")
-            .Replace("\"", "&quot;")
-            .Replace("'",  "&apos;");
+            .Replace("'",  "&#39;");
 
     private static string Trunc(string? s, int max) =>
         s is null ? string.Empty :
@@ -352,6 +382,13 @@ internal class BillSummary
     public string?   Memo                { get; set; }
     public string?   Status              { get; set; }
     public int       LineCount           { get; set; }
+}
+
+internal class UomRow
+{
+    public string ListID       { get; set; } = string.Empty;
+    public string FullName     { get; set; } = string.Empty;
+    public string BaseUnitName { get; set; } = string.Empty;
 }
 
 internal class LineRow

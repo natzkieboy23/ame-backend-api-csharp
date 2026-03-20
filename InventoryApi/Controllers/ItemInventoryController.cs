@@ -30,6 +30,8 @@ public class ItemInventoryController : ControllerBase
         if (!string.IsNullOrWhiteSpace(manufacturerPartNumber))
             query = query.Where(i => i.ManufacturerPartNumber == manufacturerPartNumber);
 
+        var warehousePrices = await GetWarehousePriceMapAsync();
+
         if (!string.IsNullOrWhiteSpace(siteFullName))
         {
             var allItems = await query.OrderBy(i => i.Name).ToListAsync();
@@ -48,6 +50,7 @@ public class ItemInventoryController : ControllerBase
             {
                 var dto = MapToResponse(i);
                 dto.SiteQuantityOnHand = siteMap.TryGetValue(i.ListID, out var qty) ? qty : null;
+                dto.WarehousePrice     = warehousePrices.TryGetValue(i.ListID, out var wp) ? wp : 0m;
                 return dto;
             }).ToList();
 
@@ -58,8 +61,47 @@ public class ItemInventoryController : ControllerBase
             .OrderBy(i => i.Name)
             .ToListAsync();
 
-        return Ok(ApiResponse<IEnumerable<ItemInventoryResponseDto>>.Ok(
-            items.Select(MapToResponse).ToList(), totalCount: items.Count));
+        var result = items.Select(i =>
+        {
+            var dto = MapToResponse(i);
+            dto.WarehousePrice = warehousePrices.TryGetValue(i.ListID, out var wp) ? wp : 0m;
+            return dto;
+        }).ToList();
+
+        return Ok(ApiResponse<IEnumerable<ItemInventoryResponseDto>>.Ok(result, totalCount: result.Count));
+    }
+
+    [HttpGet("products")]
+    public async Task<ActionResult<ApiResponse<IEnumerable<ItemInventoryResponseDto>>>> GetProducts(
+        [FromQuery] string? isActive)
+    {
+        IQueryable<ItemInventory> query = _db.ItemInventories;
+
+        if (!string.IsNullOrWhiteSpace(isActive))
+            query = query.Where(i => i.IsActive == isActive);
+
+        var items = await query.OrderBy(i => i.Name).ToListAsync();
+
+        var siteItems = await _db.ItemSites
+            .Where(s => s.InventorySiteRef_FullName == "Warehouse"
+                     && s.ItemInventoryRef_ListID != null)
+            .ToListAsync();
+
+        var siteMap = siteItems
+            .GroupBy(s => s.ItemInventoryRef_ListID!)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.QuantityOnHand ?? 0m));
+
+        var warehousePrices = await GetWarehousePriceMapAsync();
+
+        var result = items.Select(i =>
+        {
+            var dto = MapToResponse(i);
+            dto.SiteQuantityOnHand = siteMap.TryGetValue(i.ListID, out var qty) ? qty : 0m;
+            dto.WarehousePrice     = warehousePrices.TryGetValue(i.ListID, out var wp) ? wp : 0m;
+            return dto;
+        }).ToList();
+
+        return Ok(ApiResponse<IEnumerable<ItemInventoryResponseDto>>.Ok(result, totalCount: result.Count));
     }
 
     [HttpGet("{id}")]
@@ -71,7 +113,11 @@ public class ItemInventoryController : ControllerBase
             return NotFound(ApiResponse<ItemInventoryResponseDto>
                 .Fail($"ItemInventory with ListID '{id}' was not found."));
 
-        return Ok(ApiResponse<ItemInventoryResponseDto>.Ok(MapToResponse(entity)));
+        var warehousePrices = await GetWarehousePriceMapAsync();
+        var dto = MapToResponse(entity);
+        dto.WarehousePrice = warehousePrices.TryGetValue(entity.ListID, out var wp) ? wp : 0m;
+
+        return Ok(ApiResponse<ItemInventoryResponseDto>.Ok(dto));
     }
 
     [HttpPost]
@@ -230,6 +276,21 @@ public class ItemInventoryController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(ApiResponse<object>.Ok(null, "Record deactivated successfully."));
+    }
+
+    private async Task<Dictionary<string, decimal>> GetWarehousePriceMapAsync()
+    {
+        var warehouseIds = await _db.PriceLevels
+            .Where(pl => pl.Name!.StartsWith("W"))
+            .Select(pl => pl.ListID)
+            .ToListAsync();
+
+        if (warehouseIds.Count == 0)
+            return [];
+
+        return await _db.PriceLevelPerItemDetails
+            .Where(d => warehouseIds.Contains(d.IDKEY) && d.ItemRef_ListID != null)
+            .ToDictionaryAsync(d => d.ItemRef_ListID!, d => d.CustomPrice ?? 0m);
     }
 
     private static ItemInventoryResponseDto MapToResponse(ItemInventory i) => new()
