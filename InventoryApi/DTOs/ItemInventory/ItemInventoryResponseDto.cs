@@ -59,6 +59,6 @@ public class ItemInventoryResponseDto
     public string? ExternalGUID { get; set; }
     // Populated only when ?siteFullName= is provided — from itemsites join
     public decimal? SiteQuantityOnHand { get; set; }
-    // Warehouse price level (pricelevel.Name LIKE 'W%') custom price; 0.00 if not set
-    public decimal  WarehousePrice     { get; set; } = 0m;
+    // Per-item custom prices keyed by price level name — only PerItem type levels with a direct CustomPrice
+    public Dictionary<string, decimal> PriceLevelPrices { get; set; } = new();
 }

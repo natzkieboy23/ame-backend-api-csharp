@@ -30,7 +30,7 @@ public class ItemInventoryController : ControllerBase
         if (!string.IsNullOrWhiteSpace(manufacturerPartNumber))
             query = query.Where(i => i.ManufacturerPartNumber == manufacturerPartNumber);
 
-        var warehousePrices = await GetWarehousePriceMapAsync();
+        var priceLevelPrices = await GetAllPriceLevelPricesAsync();
 
         if (!string.IsNullOrWhiteSpace(siteFullName))
         {
@@ -50,7 +50,7 @@ public class ItemInventoryController : ControllerBase
             {
                 var dto = MapToResponse(i);
                 dto.SiteQuantityOnHand = siteMap.TryGetValue(i.ListID, out var qty) ? qty : null;
-                dto.WarehousePrice     = warehousePrices.TryGetValue(i.ListID, out var wp) ? wp : 0m;
+                dto.PriceLevelPrices   = priceLevelPrices.TryGetValue(i.ListID, out var pl) ? pl : new();
                 return dto;
             }).ToList();
 
@@ -64,7 +64,7 @@ public class ItemInventoryController : ControllerBase
         var result = items.Select(i =>
         {
             var dto = MapToResponse(i);
-            dto.WarehousePrice = warehousePrices.TryGetValue(i.ListID, out var wp) ? wp : 0m;
+            dto.PriceLevelPrices = priceLevelPrices.TryGetValue(i.ListID, out var pl) ? pl : new();
             return dto;
         }).ToList();
 
@@ -91,13 +91,13 @@ public class ItemInventoryController : ControllerBase
             .GroupBy(s => s.ItemInventoryRef_ListID!)
             .ToDictionary(g => g.Key, g => g.Sum(x => x.QuantityOnHand ?? 0m));
 
-        var warehousePrices = await GetWarehousePriceMapAsync();
+        var priceLevelPrices = await GetAllPriceLevelPricesAsync();
 
         var result = items.Select(i =>
         {
             var dto = MapToResponse(i);
             dto.SiteQuantityOnHand = siteMap.TryGetValue(i.ListID, out var qty) ? qty : 0m;
-            dto.WarehousePrice     = warehousePrices.TryGetValue(i.ListID, out var wp) ? wp : 0m;
+            dto.PriceLevelPrices   = priceLevelPrices.TryGetValue(i.ListID, out var pl) ? pl : new();
             return dto;
         }).ToList();
 
@@ -113,9 +113,9 @@ public class ItemInventoryController : ControllerBase
             return NotFound(ApiResponse<ItemInventoryResponseDto>
                 .Fail($"ItemInventory with ListID '{id}' was not found."));
 
-        var warehousePrices = await GetWarehousePriceMapAsync();
+        var priceLevelPrices = await GetAllPriceLevelPricesAsync();
         var dto = MapToResponse(entity);
-        dto.WarehousePrice = warehousePrices.TryGetValue(entity.ListID, out var wp) ? wp : 0m;
+        dto.PriceLevelPrices = priceLevelPrices.TryGetValue(entity.ListID, out var pl) ? pl : new();
 
         return Ok(ApiResponse<ItemInventoryResponseDto>.Ok(dto));
     }
@@ -278,19 +278,30 @@ public class ItemInventoryController : ControllerBase
         return Ok(ApiResponse<object>.Ok(null, "Record deactivated successfully."));
     }
 
-    private async Task<Dictionary<string, decimal>> GetWarehousePriceMapAsync()
+    // Returns: itemListID → { priceLevelName → customPrice }
+    // Only includes PerItem type levels that have a direct CustomPrice set
+    private async Task<Dictionary<string, Dictionary<string, decimal>>> GetAllPriceLevelPricesAsync()
     {
-        var warehouseIds = await _db.PriceLevels
-            .Where(pl => pl.Name!.StartsWith("W"))
-            .Select(pl => pl.ListID)
-            .ToListAsync();
+        var rows = await (
+            from d in _db.PriceLevelPerItemDetails
+            where d.CustomPrice != null && d.ItemRef_ListID != null
+            join l in _db.PriceLevels
+                on d.IDKEY equals l.ListID
+            where l.IsActive == "true" && l.PriceLevelType == "PerItem"
+            select new { d.ItemRef_ListID, LevelName = l.Name, d.CustomPrice }
+        ).ToListAsync();
 
-        if (warehouseIds.Count == 0)
-            return [];
-
-        return await _db.PriceLevelPerItemDetails
-            .Where(d => warehouseIds.Contains(d.IDKEY) && d.ItemRef_ListID != null)
-            .ToDictionaryAsync(d => d.ItemRef_ListID!, d => d.CustomPrice ?? 0m);
+        var map = new Dictionary<string, Dictionary<string, decimal>>();
+        foreach (var row in rows)
+        {
+            if (!map.TryGetValue(row.ItemRef_ListID!, out var levelDict))
+            {
+                levelDict = new Dictionary<string, decimal>();
+                map[row.ItemRef_ListID!] = levelDict;
+            }
+            levelDict[row.LevelName ?? "Price Level"] = row.CustomPrice!.Value;
+        }
+        return map;
     }
 
     private static ItemInventoryResponseDto MapToResponse(ItemInventory i) => new()
